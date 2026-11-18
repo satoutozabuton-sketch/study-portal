@@ -7,7 +7,7 @@ app.secret_key = 'learning_support_colab_secret_key'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 USERS = {
-    "chiencity": {"password": "admin123", "role": "admin"},
+    "chienGG.com": {"password": "114514", "role": "admin"},
     "student1": {"password": "password123", "role": "student"}
 }
 
