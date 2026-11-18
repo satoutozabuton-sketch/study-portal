@@ -1,13 +1,14 @@
 import os
 from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, session, jsonify
+from flask import Flask, render_template_string, request, redirect, session, jsonify, Response
 
 app = Flask(__name__)
 app.secret_key = 'learning_support_colab_secret_key'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
+# --- メモリデータベース ---
 USERS = {
-    "chienGG.com": {"password": "114514", "role": "admin"},
+    "chiencity": {"password": "admin123", "role": "admin"},
     "student1": {"password": "password123", "role": "student"}
 }
 
@@ -34,6 +35,57 @@ HOMEWORKS = [
 
 PERSONAL_MEMOS = []
 
+# --- PWA用 マニフェスト & サービスワーカー ---
+@app.route('/manifest.json')
+def manifest():
+    manifest_data = {
+        "name": "学習支援ポータル",
+        "short_name": "学習ポータル",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#f8fafc",
+        "theme_color": "#2563eb",
+        "icons": [
+            {
+                "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>",
+                "sizes": "192x192",
+                "type": "image/svg+xml"
+            },
+            {
+                "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>",
+                "sizes": "512x512",
+                "type": "image/svg+xml"
+            }
+        ]
+    }
+    return jsonify(manifest_data)
+
+@app.route('/sw.js')
+def service_worker():
+    sw_code = """
+    self.addEventListener('install', (event) => {
+        self.skipWaiting();
+    });
+    self.addEventListener('activate', (event) => {
+        event.waitUntil(clients.claim());
+    });
+    self.addEventListener('push', (event) => {
+        const data = event.data ? event.data.json() : { title: '学習支援ポータル', body: '新しいお知らせがあります！' };
+        event.waitUntil(
+            self.registration.showNotification(data.title, {
+                body: data.body,
+                icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>"
+            })
+        );
+    });
+    self.addEventListener('notificationclick', (event) => {
+        event.notification.close();
+        event.waitUntil(clients.openWindow('/'));
+    });
+    """
+    return Response(sw_code, mimetype='application/javascript')
+
+# --- HTML テンプレート ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -41,21 +93,31 @@ HTML_TEMPLATE = """
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>学習支援ポータル</title>
+  <!-- PWA設定 -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="学習ポータル">
+
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #334155; margin: 0; padding: 20px; }
-    .header-bar { display: flex; justify-content: space-between; align-items: center; background: white; padding: 16px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; background: white; padding: 16px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
     .user-info { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1.05rem; }
-    .logout-btn { color: #ef4444; text-decoration: none; font-weight: 600; padding: 6px 12px; border: 1px solid #fee2e2; border-radius: 6px; transition: 0.2s; }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .notify-btn { background: #f59e0b; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+    .notify-btn:hover { background: #d97706; }
+    .logout-btn { color: #ef4444; text-decoration: none; font-weight: 600; padding: 6px 12px; border: 1px solid #fee2e2; border-radius: 6px; transition: 0.2s; font-size: 0.85rem; }
     .logout-btn:hover { background: #fef2f2; }
-
+    
     .main-layout { display: flex; gap: 20px; flex-wrap: wrap; }
     .calendar-card { flex: 7; min-width: 320px; background: white; padding: 20px; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.04); }
     .sidebar { flex: 3; min-width: 280px; display: flex; flex-direction: column; gap: 20px; }
-
+    
     .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.04); }
     .card h3 { margin: 0 0 12px 0; font-size: 1.1rem; color: #0f172a; border-bottom: 2px solid #f1f5f9; padding-bottom: 8px; }
-
+    
     .fc { --fc-border-color: #f1f5f9; --fc-button-bg-color: #2563eb; --fc-button-border-color: #2563eb; --fc-button-active-bg-color: #1d4ed8; }
     .fc .fc-toolbar-title { font-size: 1.25rem; font-weight: 700; color: #1e293b; }
     .fc .fc-button { border-radius: 8px; font-weight: 600; text-transform: capitalize; }
@@ -67,7 +129,7 @@ HTML_TEMPLATE = """
     .memo-btn { background: #10b981; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .memo-btn:hover { background: #059669; }
 
-    .floating-btn { position: fixed; bottom: 24px; right: 24px; padding: 14px 24px; background: #2563eb; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; font-size: 0.95rem; box-shadow: 0 8px 20px rgba(37,99,235,0.3); transition: 0.2s; }
+    .floating-btn { position: fixed; bottom: 24px; right: 24px; padding: 14px 24px; background: #2563eb; color: white; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; font-size: 0.95rem; box-shadow: 0 8px 20px rgba(37,99,235,0.3); transition: 0.2s; z-index: 900; }
     .floating-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(37,99,235,0.4); }
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center; }
     .modal-content { background: #0f172a; color: white; padding: 28px; border-radius: 16px; border: 1px solid #38bdf8; text-align: center; position: relative; max-width: 320px; width: 90%; }
@@ -77,6 +139,33 @@ HTML_TEMPLATE = """
     .center-cap { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 28px; height: 28px; background: #1e293b; border: 2px solid #38bdf8; border-radius: 50%; }
   </style>
   <script>
+    // サービスワーカーの登録
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.log('SW failed:', err));
+      });
+    }
+
+    // 通知の許可とテスト送信
+    async function enableAndTestNotification() {
+      if (!('Notification' in window)) {
+        alert('このブラウザは通知機能に対応していません。（iPhoneの場合は先に「ホーム画面に追加」してから開いてください）');
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        const reg = await navigator.serviceWorker.ready;
+        reg.showNotification('📚 学習支援ポータル', {
+          body: '通知の設定が完了しました！課題やメモのリマインドがここに届きます。',
+          icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>"
+        });
+      } else {
+        alert('通知がブロックされています。ブラウザまたはスマホの設定から通知を許可してください。');
+      }
+    }
+
     var isAdmin = {{ is_admin | tojson }};
     var rawEvents = {{ events | tojson }};
 
@@ -87,7 +176,7 @@ HTML_TEMPLATE = """
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' },
         events: rawEvents,
         eventClick: function(info) {
-          info.jsEvent.preventDefault();
+          info.jsEvent.preventDefault(); 
           var selectedId = info.event.id;
           var selectedType = info.event.extendedProps.type;
 
@@ -111,13 +200,13 @@ HTML_TEMPLATE = """
     function renderList() {
       var today = new Date().toISOString().split('T')[0];
       var evs = rawEvents.filter(e => e.start >= today).sort((a,b) => a.start.localeCompare(b.start));
-
+      
       document.getElementById('list').innerHTML = evs.map(e => {
         var clickAttr = (e.url && e.url !== "#") ? `onclick="window.open('${e.url}','_blank')"` : '';
         var cursorStyle = (e.url && e.url !== "#") ? 'cursor:pointer;' : 'cursor:default;';
         var isMemo = e.type === 'memo';
         var badge = isMemo ? '<span style="color:#059669;font-size:0.75rem;font-weight:bold;">個人メモ</span>' : '<span style="color:#2563eb;font-size:0.75rem;font-weight:bold;">全体課題</span>';
-
+        
         return `<div ${clickAttr} style="border-left:4px solid ${e.backgroundColor};background:#f8fafc;padding:10px;margin-bottom:8px;border-radius:6px;${cursorStyle}">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <small style="color:#64748b;">⏳ ${e.start.slice(5)}</small>${badge}
@@ -140,7 +229,7 @@ HTML_TEMPLATE = """
 
     function openRoulette() { document.getElementById('modal').style.display = 'flex'; createWheel(); }
     function closeRoulette() { document.getElementById('modal').style.display = 'none'; }
-
+    
     function createWheel() {
       const wheel = document.getElementById('wheel');
       if (wheel.children.length) return;
@@ -182,7 +271,10 @@ HTML_TEMPLATE = """
         <span style="background:#d1fae5;color:#065f46;padding:3px 8px;border-radius:12px;font-size:0.8rem;font-weight:600;">生徒</span>
       {% endif %}
     </div>
-    <a href="/logout" class="logout-btn">ログアウト</a>
+    <div class="header-actions">
+      <button onclick="enableAndTestNotification()" class="notify-btn">🔔 通知をON・テスト</button>
+      <a href="/logout" class="logout-btn">ログアウト</a>
+    </div>
   </div>
 
   {% if is_admin %}
@@ -242,6 +334,8 @@ LOGIN_TEMPLATE = """
   <meta charset="UTF-8">
   <title>ログイン | 学習支援</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2563eb">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
     .container { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; max-width: 680px; width: 100%; }
@@ -281,7 +375,7 @@ LOGIN_TEMPLATE = """
 def index():
     if 'user_id' not in session:
         return render_template_string(LOGIN_TEMPLATE)
-
+    
     user_id = session['user_id']
     role = session.get('role', 'student')
     is_admin = (role == 'admin')
@@ -372,4 +466,5 @@ def delete_memo():
     return redirect('/')
 
 if __name__ == '__main__':
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
