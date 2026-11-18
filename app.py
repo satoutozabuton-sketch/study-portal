@@ -1,12 +1,11 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, redirect, session, jsonify, Response
 
 app = Flask(__name__)
 app.secret_key = 'learning_support_colab_secret_key'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-# --- メモリデータベース ---
 USERS = {
     "chiencity": {"password": "admin123", "role": "admin"},
     "student1": {"password": "password123", "role": "student"}
@@ -35,7 +34,8 @@ HOMEWORKS = [
 
 PERSONAL_MEMOS = []
 
-# --- PWA用 マニフェスト & サービスワーカー ---
+LATEST_NOTIFICATION = {"title": "", "body": "", "timestamp": 0}
+
 @app.route('/manifest.json')
 def manifest():
     manifest_data = {
@@ -85,7 +85,13 @@ def service_worker():
     """
     return Response(sw_code, mimetype='application/javascript')
 
-# --- HTML テンプレート ---
+@app.route('/api/check-notification')
+def check_notification():
+    since = float(request.args.get('since', 0))
+    if LATEST_NOTIFICATION['timestamp'] > since:
+        return jsonify({"has_new": True, "notification": LATEST_NOTIFICATION})
+    return jsonify({"has_new": False})
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -93,7 +99,6 @@ HTML_TEMPLATE = """
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>学習支援ポータル</title>
-  <!-- PWA設定 -->
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#2563eb">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -139,32 +144,47 @@ HTML_TEMPLATE = """
     .center-cap { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 28px; height: 28px; background: #1e293b; border: 2px solid #38bdf8; border-radius: 50%; }
   </style>
   <script>
-    // サービスワーカーの登録
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then(reg => console.log('SW registered:', reg.scope))
-          .catch(err => console.log('SW failed:', err));
+        navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW failed:', err));
       });
     }
 
-    // 通知の許可とテスト送信
     async function enableAndTestNotification() {
       if (!('Notification' in window)) {
-        alert('このブラウザは通知機能に対応していません。（iPhoneの場合は先に「ホーム画面に追加」してから開いてください）');
+        alert('このブラウザは通知機能に対応していません。');
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission === 'granted') {
         const reg = await navigator.serviceWorker.ready;
         reg.showNotification('📚 学習支援ポータル', {
-          body: '通知の設定が完了しました！課題やメモのリマインドがここに届きます。',
+          body: '通知の設定が完了しました！新しい課題の追加や期限をお知らせします。',
           icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>"
         });
       } else {
-        alert('通知がブロックされています。ブラウザまたはスマホの設定から通知を許可してください。');
+        alert('通知がブロックされています。ブラウザの設定から通知を許可してください。');
       }
     }
+
+    // サーバーからの新着通知を定期チェック（ポーリング）
+    let lastCheckedTime = Date.now() / 1000;
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/check-notification?since=' + lastCheckedTime);
+        const data = await res.json();
+        if (data.has_new) {
+          lastCheckedTime = data.notification.timestamp;
+          if (Notification.permission === 'granted') {
+            const reg = await navigator.serviceWorker.ready;
+            reg.showNotification(data.notification.title, {
+              body: data.notification.body,
+              icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='55' text-anchor='middle'>📚</text></svg>"
+            });
+          }
+        }
+      } catch(e) {}
+    }, 5000); // 5秒ごとにチェック
 
     var isAdmin = {{ is_admin | tojson }};
     var rawEvents = {{ events | tojson }};
@@ -429,6 +449,14 @@ def add_event():
             "url": url if url else "#",
             "type": "hw"
         })
+
+        global LATEST_NOTIFICATION
+        LATEST_NOTIFICATION = {
+            "title": "📢 新しい全体課題",
+            "body": f"「{title}」(期限: {date}) が追加されました！",
+            "timestamp": datetime.now().timestamp()
+        }
+
     return redirect('/')
 
 @app.route('/add-memo', methods=['POST'])
